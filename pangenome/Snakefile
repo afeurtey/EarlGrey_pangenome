@@ -34,6 +34,8 @@ MAX_SEQ = config["max_consensus_seqs"]
 MIN_SEQ = config["min_consensus_seqs"]
 SCRIPT_DIR = config["script_dir"]
 HELI = config.get("run_heliano", False)
+SOFTMASK = config.get("softmask", False)
+MARGIN = config.get("margin", False)
 
 onstart:
     # Display tea art
@@ -71,4 +73,10 @@ rule all:
             "{outdir}/{species}_EarlGrey/{species}_summaryFiles/{species}_divergence_summary_table.tsv",
             outdir=OUTDIR,
             species=SPECIES_LIST
-        )
+        ),
+        # Optional softmasked genomes
+        expand(
+            "{outdir}/{species}_EarlGrey/{species}_summaryFiles/{species}.softmasked.fasta",
+            outdir=OUTDIR,
+            species=SPECIES_LIST
+        ) if SOFTMASK is True or SOFTMASK == 'yes' else []

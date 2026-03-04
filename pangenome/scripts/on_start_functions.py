@@ -64,20 +64,24 @@ def validate_parameters(config, outfile = None):
     # ---- Defaults + messages ----
     defaults = {
         'threads': (1, "{} cores will be used"),
-        'num': (10, "De Novo Sequences will be extended through a maximum of {} iterations"),
-        'no_seq': (20, "{} sequences will be used in BEAT consensus generation"),
-        'cluster': ('no', None),
-        'softMask': ('no', None),
-        'margin': ('no', None),
-        'Flank': (1000, "Blast, extend, align, trim process will add {}bp to each end in each iteration"),
-        'min_seq': (3, "Blast, extend, align, trim process will require {} sequences to generate a new consensus sequence"),
-        'run_heliano': ('FALSE', None)
+        'iterations': (10, "De Novo Sequences will be extended through a maximum of {} iterations"),
+        'max_consensus_seqs': (20, "{} sequences will be used in BEAT consensus generation"),
+        'skip_clustering': (False, None),
+        'clustering_identity': (0.8, None),
+        'clustering_coverage': (0.8, None),
+        'softmask': (False, None),
+        'margin': (False, None),
+        'flank': (1000, "Blast, extend, align, trim process will add {}bp to each end in each iteration"),
+        'min_consensus_seqs': (3, "Blast, extend, align, trim process will require {} sequences to generate a new consensus sequence"),
+        'run_heliano': (False, None),
+        'repeatmasker_species': ("", None),
+        'custom_library': ("", None)
     }
 
     msg_header("Parameter values")
 
     for param, (default_val, message_template) in defaults.items():
-        if not config.get(param):
+        if param not in config or config.get(param) is None or config.get(param) == "":
             config[param] = default_val
             if message_template:
                 msg_info(message_template.format(default_val))
@@ -91,31 +95,45 @@ def validate_parameters(config, outfile = None):
     msg_header("Pipeline behaviour")
 
     # RepeatMasker
-    if not config.get('RepSpec') and not config.get('startCust'):
-        msg_info("RepeatMasker species not specified, running Earl Grey without an initial mask with known repeats")
+    repspec = config.get('repeatmasker_species', "")
+    custom_lib = config.get('custom_library', "")
+    
+    if repspec and custom_lib:
+        msg_warn("Both RepeatMasker species and custom library specified - both will be used for initial masking")
+    elif repspec:
+        msg_info(f"Running with initial RepeatMasker masking using species: {repspec}")
+    elif custom_lib:
+        msg_info(f"Running with initial RepeatMasker masking using custom library: {os.path.basename(custom_lib)}")
     else:
-        msg_info("Running with an initial mask using known repeats")
+        msg_info("RepeatMasker species/library not specified, running Earl Grey without an initial mask with known repeats")
 
     # Clustering
-    if config['cluster'] == 'yes':
-        msg_warn("TE consensus sequences will be clustered (may affect subfamilies and create chimeras)")
+    skip_clustering = config.get('skip_clustering', False)
+    if skip_clustering:
+        msg_info("TE consensus sequences will NOT be clustered (libraries will be concatenated)")
     else:
-        msg_info("TE consensus sequences will not be clustered")
+        cluster_id = config.get('clustering_identity', 0.8)
+        cluster_cov = config.get('clustering_coverage', 0.8)
+        msg_info(f"TE consensus sequences will be clustered (identity: {cluster_id}, coverage: {cluster_cov})")
+        msg_warn("Clustering may affect subfamilies and create chimeras")
 
     # SoftMask
-    if config['softMask'] == 'yes':
+    softmask = config.get('softmask', False)
+    if softmask is True or softmask == 'yes':
         msg_info("Softmasked genome will be generated")
     else:
         msg_info("Softmasked genome will not be generated")
 
     # Margin
-    if config['margin'] == 'yes':
+    margin = config.get('margin', False)
+    if margin is True or margin == 'yes':
         msg_info("Short TE sequences (<100bp) will be removed")
     else:
         msg_info("Short TE sequences (<100bp) will not be removed")
 
     # Helitrons
-    if config['run_heliano'] == 'yes':
+    run_heliano = config.get('run_heliano', False)
+    if run_heliano is True or run_heliano == 'yes':
         msg_info("HELITRON detection will be run using HELIANO")
     else:
         msg_info("HELITRON detection will not be run")

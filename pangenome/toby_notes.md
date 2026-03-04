@@ -226,3 +226,435 @@ Successfully ran full pipeline on two test genomes (genome1.fasta and genome2.fa
 - Annotation: Both genomes annotated with pangenome library
 - Divergence: Landscape plots and summary tables generated
 - Final outputs: All summary files, charts, and annotations created successfully
+
+## March 4, 2026 - Testing optional units
+
+I need to test each optional unit to ensure correct functioning. A full list of optional units to test:
+- HELIANO **SUCCESS**
+- Initial RepeatMasker with species term **SUCCESS**
+- Initial RepeatMasker with custom library **SUCCESS**
+- Changing BEAT iterations
+- Changing flank size
+- Changing clustering parameters (e.g. cd-hit identity threshold), or avoiding this step entirely
+- Removing TE annotations < 100bp
+- Creating a softmasked genome for each input genome after annotation
+- Changing max number of sequences used to generate a consensus sequence
+- Changing min number of sequences used to generate a consensus sequence
+- Printing help
+
+### Unit test 1: HELIANO
+To test the HELIANO unit, I will set `run_heliano: True` in the config file and run the pipeline. I will check that the HELIANO-specific outputs are generated correctly and that the workflow executes without errors.
+
+```yaml
+genome: 
+  genome1: "/data/toby/EarlGrey_pangenome/test/genome1.fasta"
+  genome2: "/data/toby/EarlGrey_pangenome/test/genome2.fasta"
+species: ["genome1", "genome2"]
+output_dir: "/data/toby/EarlGrey_pangenome/test/unit_test_1_HELIANO"
+threads: 8
+repeatmasker_species: ""  # e.g. "arthropoda" or "" for none
+custom_library: ""        # path to custom library or "" for none
+iterations: 10
+flank: 1000
+max_consensus_seqs: 20
+min_consensus_seqs: 3
+script_dir: "/data/toby/miniforge3/envs/earlgrey-pan-dev/share/earlgrey-7.0.3-0/scripts"
+run_heliano: True
+```
+
+I will run the pipeline and check for the presence of HELIANO-specific outputs, such as any files or logs that indicate HELIANO was executed. I will also verify that the main workflow completes successfully without errors.
+
+```bash
+snakemake --cores 8
+```
+
+This ran successfully, and I can confirm that the HELIANO-specific outputs were generated as expected. The workflow executed without any errors, indicating that the HELIANO unit is functioning correctly when enabled. I did fix `mergeRepeats.R` which was not parsing the attributes column for the HELIANO outputs correctly, and have pushed this to the earl grey repo.
+
+### Unit test 2: Initial RepeatMasker with species term
+To test the initial RepeatMasker step with a species term, I will set `repeatmasker_species: "lepidoptera"` in the config file and run the pipeline. I will check that the RepeatMasker step runs correctly and that the specified species library is used for masking.
+
+```yaml
+genome: 
+  genome1: "/data/toby/EarlGrey_pangenome/test/genome1.fasta"
+  genome2: "/data/toby/EarlGrey_pangenome/test/genome2.fasta"
+species: ["genome1", "genome2"]
+output_dir: "/data/toby/EarlGrey_pangenome/test/unit_test_2_REPEATMASKER"
+threads: 8
+repeatmasker_species: "lepidoptera"  # e.g. "arthropoda" or "" for none
+custom_library: ""        # path to custom library or "" for none
+iterations: 10
+flank: 1000
+max_consensus_seqs: 20
+min_consensus_seqs: 3
+script_dir: "/data/toby/miniforge3/envs/earlgrey-pan-dev/share/earlgrey-7.0.3-0/scripts"
+run_heliano: True
+```
+
+I will run the pipeline and check the logs to confirm that RepeatMasker is using the `lepidoptera` library for masking. I will also verify that the workflow completes successfully without errors.
+
+```bash
+# make the DAG to check the RepeatMasker step is included
+snakemake --cores 1 --dag 2>&1 | sed -n '/^digraph/,$p' > /data/toby/EarlGrey_pangenome/test/unit_test_2_REPEATMASKER/temp.txt
+cat /data/toby/EarlGrey_pangenome/test/unit_test_2_REPEATMASKER/temp.txt | dot -Tsvg > /data/toby/EarlGrey_pangenome/test/unit_test_2_REPEATMASKER/dag.svg
+
+# run the pipeline
+snakemake --cores 8
+```
+
+I had to fix `lib_construct.smk` as it was not finding the correct masked genome file (simply pointing to prep.masked rather than original input.masked!).
+
+Okay, another issue here. When using RepeatMasker there aren't enough sequences left for RepeatModeler to run successfully in my test fasta. I will need to run on bigger test sets. I will use Z. tritici and fungi RepeatMasker library for this test.
+
+```bash
+cp /legserv/NGS_data/Zymoseptoria/Zt_
+Reference_genomes/19Pangenome_genomes/IPO323/Zymoseptoria_tritici.MG2.dna.toplevel.mt+.fa /data/toby/EarlGrey_pangenome/test/IPO323.fa
+
+cp /legserv/NGS_data/Zymoseptoria/Zt_Reference_genomes/19Pangenome_genomes/1A5/ST99CH_1A5.fa /data/toby/EarlGrey_pangenome/test/1A5.fa
+```
+
+Here is the updated yaml for this test:
+
+```yaml
+genome: 
+  IPO323: "/data/toby/EarlGrey_pangenome/test/IPO323.fa"
+  1A5: "/data/toby/EarlGrey_pangenome/test/1A5.fa"
+species: ["IPO323", "1A5"]
+output_dir: "/data/toby/EarlGrey_pangenome/test/unit_test_2_REPEATMASKER"
+threads: 16
+repeatmasker_species: "fungi"  # e.g. "arthropoda" or "" for none
+custom_library: ""        # path to custom library or "" for none
+iterations: 10
+flank: 1000
+max_consensus_seqs: 20
+min_consensus_seqs: 3
+script_dir: "/data/toby/miniforge3/envs/earlgrey-pan-dev/share/earlgrey-7.0.3-0/scripts"
+run_heliano: True
+```
+
+```bash
+snakemake --cores 16
+```
+
+This completed successfully, and the libraries were correctly combined and clustered. The initial RepeatMasker step ran with the `fungi` library as expected, and the workflow executed without errors. I can confirm that the initial RepeatMasker with species term is functioning correctly when enabled.
+
+### Unit test 3: Initial RepeatMasker with custom library
+To test the initial RepeatMasker step with a custom library, I will create a small custom library file with a few repeat sequences and set `custom_library: "/path/to/custom_library.fa"` in the config file. I will run the pipeline and check that RepeatMasker uses the custom library for masking, and that the workflow completes successfully without errors.
+
+```yaml
+genome: 
+  IPO323: "/data/toby/EarlGrey_pangenome/test/IPO323.fa"
+  1A5: "/data/toby/EarlGrey_pangenome/test/1A5.fa"
+species: ["IPO323", "1A5"]
+output_dir: "/data/toby/EarlGrey_pangenome/test/unit_test_3_REPEATMASKERCUSTOM"
+threads: 16
+repeatmasker_species: ""  # e.g. "arthropoda" or "" for none
+custom_library: "/data/toby/EarlGrey_pangenome/test/test_custom_library.fa"        # path to custom library or "" for none
+iterations: 10
+flank: 1000
+max_consensus_seqs: 20
+min_consensus_seqs: 3
+script_dir: "/data/toby/miniforge3/envs/earlgrey-pan-dev/share/earlgrey-7.0.3-0/scripts"
+run_heliano: True
+```
+
+```bash
+snakemake --cores 16
+```
+
+This worked. I had to fix some of the onstart function messages to update with the new config parameters, but the pipeline ran successfully with the custom library. RepeatMasker used the specified custom library for masking, and the workflow completed without errors. I can confirm that the initial RepeatMasker with custom library is functioning correctly when enabled.
+
+I have also added a function to either not cluster sequences at all, or give users the ability to change the clustering parameters.
+
+### Unit test 4: Changing all numeric parameters
+To test changing all numeric parameters, I will modify the config file to set different values for `iterations`, `flank`, `max_consensus_seqs`, and `min_consensus_seqs`. I will run the pipeline and check that these parameters are correctly applied in the relevant steps (e.g., TEstrainer iterations, flank size in library construction, and consensus sequence generation). I will also verify that the workflow completes successfully without errors.
+
+```yaml
+genome: 
+  genome_1: "/data/toby/EarlGrey_pangenome/test/genome1.fasta"
+  genome_2: "/data/toby/EarlGrey_pangenome/test/genome2.fasta"
+species: ["genome_1", "genome_2"]
+output_dir: "/data/toby/EarlGrey_pangenome/test/unit_test_4_NUMERICPARAMS"
+threads: 16
+repeatmasker_species: ""  # e.g. "arthropoda" or "" for none
+custom_library: ""        # path to custom library or "" for none
+iterations: 15
+flank: 2000
+max_consensus_seqs: 30
+min_consensus_seqs: 5
+
+# Clustering options (for combining TE libraries from multiple genomes)
+skip_clustering: False  # Set to True to skip clustering (just concatenate all libraries)
+clustering_identity: 0.8  # cd-hit sequence identity threshold (0.0-1.0, default 0.8)
+clustering_coverage: 0.8  # cd-hit alignment coverage for shorter sequence (0.0-1.0, default 0.8)
+
+script_dir: "/data/toby/miniforge3/envs/earlgrey-pan-dev/share/earlgrey-7.0.3-0/scripts"
+run_heliano: True
+```
+
+```bash
+snakemake --cores 16
+```
+
+## March 4, 2026 - Configuration Enhancement and Validation
+
+### Summary of All Changes Made Today
+
+Today I worked with Claude to enhance the pangenome pipeline configuration system and add several new optional features. Below is a comprehensive summary of all changes:
+
+#### 1. Fixed Configuration Validation and Reporting
+**File:** `scripts/on_start_functions.py`
+
+**Problem:** The validation function was using old parameter names from the original EarlGrey pipeline (e.g., `num`, `no_seq`, `RepSpec`, `startCust`) that didn't match the pangenome-specific config structure.
+
+**Changes:**
+- Updated parameter defaults dictionary to use correct pangenome parameter names:
+  - `num` → `iterations`
+  - `no_seq` → `max_consensus_seqs`
+  - `min_seq` → `min_consensus_seqs`
+  - `Flank` → `flank`
+  - Added: `skip_clustering`, `clustering_identity`, `clustering_coverage`, `softmask`, `margin`, `repeatmasker_species`, `custom_library`
+  
+- Fixed validation logic to handle both empty strings and None/missing values properly
+- Updated "Pipeline behaviour" reporting to correctly detect and report:
+  - RepeatMasker species vs custom library usage (distinguishes between them)
+  - Clustering parameters or skip status
+  - Softmask status
+  - Margin (short TE removal) status
+  - HELIANO status
+
+**Impact:** Config validation now accurately reflects what the pangenome pipeline will do with clear, informative messages.
+
+#### 2. Implemented Clustering Control
+**Files:** `rules/clustering.smk`, `config/config.yaml`
+
+**Problem:** Users had no control over clustering behavior - it always ran cd-hit with hardcoded parameters.
+
+**Changes:**
+- Added three new config parameters:
+  - `skip_clustering: False` - Set to True to concatenate libraries without clustering
+  - `clustering_identity: 0.8` - cd-hit sequence identity threshold (0.0-1.0)
+  - `clustering_coverage: 0.8` - cd-hit alignment coverage threshold (0.0-1.0)
+  
+- Modified `cluster_all_species` rule to:
+  - Read these parameters from config
+  - Conditionally run cd-hit or just copy the combined file if skipping
+  - Use user-specified identity and coverage thresholds in cd-hit command
+  - Clean up .clstr files in both paths
+
+**Impact:** Users can now:
+- Skip clustering entirely for maximum subfamily resolution
+- Adjust stringency (e.g., 0.95/0.90 for stricter, 0.70/0.70 for more permissive)
+- See clustering parameters reported during validation
+
+#### 3. Implemented Softmasking and Short TE Removal
+**Files:** `rules/annotate.smk`, `rules/lib_construct.smk`, `Snakefile`, `config/config.yaml`
+
+**Problem:** 
+- Softmasked genome generation wasn't integrated into the pangenome pipeline
+- Short TE removal (margin) option wasn't exposed
+- The `prep_genome` rule wasn't creating the backup file needed for softmasking
+
+**Changes:**
+- Added two new config parameters:
+  - `softmask: False` - Set to True to generate softmasked genomes using bedtools
+  - `margin: False` - Set to True to remove TEs <100bp from annotations
+  
+- Fixed `prep_genome` rule in `lib_construct.smk`:
+  - Added `backup` output: `{species}.bak.gz`
+  - Creates backup in output directory (not input directory)
+  - Properly cleans up temporary files
+  
+- Updated `annotate.smk`:
+  - Added boolean-to-string conversion for `SOFTMASK` and `MARGIN` variables (True/False → "yes"/"no")
+  - Matches pattern used for HELIANO to ensure shell commands work correctly
+  
+- Modified `Snakefile`:
+  - Added `SOFTMASK` and `MARGIN` global variables
+  - Made softmasked genomes conditionally requested in `rule all` based on config
+
+**Impact:** 
+- Softmasked genomes automatically generated when requested
+- Short TEs can be filtered from final annotations
+- Both features properly validated and reported
+
+#### 4. Fixed RepeatMasker Output Filename Issue
+**File:** `rules/lib_construct.smk`
+
+**Problem:** RepeatMasker appends `.masked` to the input filename. With input `genome1.prep`, output is `genome1.prep.masked`, not `genome1.masked`.
+
+**Changes:**
+- Updated both `repeatmasker` and `repeatmasker_custom` rules
+- Changed output specification from `{species}.masked` to `{species}.prep.masked`
+- Updated `get_masked_genome_input()` function to return correct path
+
+**Impact:** Pipeline correctly finds RepeatMasker output files.
+
+#### 5. Fixed RepeatMasker Working Directory Issue
+**File:** `rules/lib_construct.smk`
+
+**Problem:** RepeatMasker was creating output files in the current working directory (pangenome/) instead of species-specific directories. Caused RM_* temp directories to appear in wrong location.
+
+**Changes:**
+- Modified both `repeatmasker` and `repeatmasker_custom` rules to:
+  - Change `params.outdir` to use wildcard-based path: `"{outdir}/{species}_EarlGrey/{species}_RepeatMasker"`
+  - Add `cd {params.outdir}` before RepeatMasker execution
+  - Use `realpath` for input genome paths
+  - Explicitly set `-dir {params.outdir}` parameter
+
+**Impact:** All RepeatMasker outputs now correctly created in species-specific directories, matching the full annotation pipeline behavior.
+
+#### 6. Code Cleanup
+**Files:** `rules/annotate.smk`, `config/config.yaml`
+
+**Changes:**
+- Removed obsolete `CONSENSUS_LIB` variable that was never used (only referenced in commented-out rules)
+- Suggested removing commented-out dead code:
+  - Lines 18-102 in `annotate.smk`: old `rule all`, `prep_genome`, `create_repeatmasker_library`, `combine_libraries`
+  - Lines 287-306: conditional rules for old single-genome approach
+- Restored preferred config formatting (double quotes, capitalized booleans, helpful comments)
+
+**Impact:** Cleaner, more maintainable codebase.
+
+### Files Modified Summary
+
+1. **`pangenome/scripts/on_start_functions.py`**
+   - Fixed all parameter names and validation logic
+   - Updated all reporting messages for accuracy
+
+2. **`pangenome/rules/clustering.smk`**
+   - Added skip/parameter control for clustering
+
+3. **`pangenome/rules/lib_construct.smk`**
+   - Fixed RepeatMasker output paths and working directories
+   - Added backup file creation to `prep_genome` rule
+
+4. **`pangenome/rules/annotate.smk`**
+   - Added boolean-to-string conversion for SOFTMASK and MARGIN
+   - Removed unused CONSENSUS_LIB variable
+
+5. **`pangenome/Snakefile`**
+   - Added SOFTMASK and MARGIN global variables
+   - Made softmasked genomes conditionally requested in rule all
+
+6. **`pangenome/config/config.yaml`**
+   - Added clustering control parameters with comments
+   - Added output options (softmask, margin) with comments
+   - Restored preferred formatting
+
+### Tests Completed Today
+1. ✅ Configuration validation messages display correctly
+2. ✅ Clustering parameters load and display properly
+3. ✅ Softmask boolean conversion works (True → "yes", False → "no")
+
+### Tests Still Needed
+
+Based on the original testing checklist, here are the tests that still need to be performed:
+
+#### 1. **Complete Unit Test 4: Numeric Parameters**
+**Status:** Started but needs completion
+**Config:**
+```yaml
+iterations: 15        # Changed from default 10
+flank: 2000          # Changed from default 1000
+max_consensus_seqs: 30  # Changed from default 20
+min_consensus_seqs: 5   # Changed from default 3
+```
+**Verification needed:**
+- Check TEstrainer runs 15 iterations (look at log files)
+- Verify flank size of 2000bp used in BEAT process
+- Confirm consensus generation uses 30 max / 5 min sequences
+
+#### 2. **Unit Test 5: Skip Clustering**
+**Config:**
+```yaml
+skip_clustering: True
+```
+**Verification needed:**
+- Check that `combined_all_species.clstrd.fa` is created
+- Verify it contains ALL sequences from all genomes without reduction
+- Compare sequence count: input (sum of all strains) should equal output
+- Confirm no `.clstr` file is generated
+- Annotation should still work with unclustered library
+
+#### 3. **Unit Test 6: Custom Clustering Parameters**
+**Config Option A - More Stringent:**
+```yaml
+skip_clustering: False
+clustering_identity: 0.95
+clustering_coverage: 0.90
+```
+**Config Option B - More Permissive:**
+```yaml
+skip_clustering: False
+clustering_identity: 0.70
+clustering_coverage: 0.70
+```
+**Verification needed:**
+- Compare output library sizes between stringent/permissive/default (0.8)
+- More stringent should result in MORE sequences (less clustering)
+- More permissive should result in FEWER sequences (more clustering)
+- Check cd-hit log files confirm correct parameters used
+
+#### 4. **Unit Test 7: Softmasked Genome Generation**
+**Config:**
+```yaml
+softmask: True
+```
+**Verification needed:**
+- Check `.softmasked.fasta` files created in `{species}_summaryFiles/`
+- Verify repeat regions are lowercase, non-repeat regions uppercase
+- File should exist for each input genome
+- Confirm workflow requests these files (check DAG)
+
+#### 5. **Unit Test 8: Margin (Remove Short TEs)**
+**Config:**
+```yaml
+margin: True
+```
+**Verification needed:**
+- Compare `.filteredRepeats.bed` with and without margin
+- All annotations <100bp should be absent when margin: True
+- Check statistics - total repeat count should be lower
+- Annotation coverage (bp) should be reduced
+
+#### 6. **Unit Test 9: Combined Options Test**
+**Config:**
+```yaml
+skip_clustering: True
+softmask: True
+margin: True
+run_heliano: True
+repeatmasker_species: "fungi"
+```
+**Verification needed:**
+- All features work together without conflicts
+- Check final outputs have all expected files
+- Validation messages report all options correctly
+
+#### 7. **Help/Documentation Feature**
+**Status:** Not yet implemented
+**Need to determine:** 
+- Should this be a separate script?
+- Integrated into Snakefile (e.g., `snakemake --help`)?
+- Separate documentation file?
+- Command-line argument parsing?
+
+### Recommended Testing Order
+
+1. **Unit Test 4** (numeric parameters) - validates basic parameter passing
+2. **Unit Test 7** (softmask) - new feature, critical to verify
+3. **Unit Test 8** (margin) - new feature, quick to verify
+4. **Unit Test 5** (skip clustering) - validates major new feature
+5. **Unit Test 6** (clustering parameters) - builds on test 5
+6. **Unit Test 9** (combined) - integration test
+7. **Help feature** - implement and test last
+
+### Quick Test Commands
+
+For each test, follow this pattern:
+```bash
+# Update config.yaml with test parameters
+snakemake --cores 1 --dry-run  # Check validation messages
+snakemake --cores 16            # Run pipeline
+# Verify outputs as described above
+```

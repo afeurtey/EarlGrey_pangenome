@@ -34,25 +34,35 @@ rule prep_genome:
         genome=lambda wildcards: GENOME[wildcards.species]
     output:
         gen_prep="{OUTDIR}/{species}_EarlGrey/{species}.prep",
-        gen_dict="{OUTDIR}/{species}_EarlGrey/{species}.dict"
+        gen_dict="{OUTDIR}/{species}_EarlGrey/{species}.dict",
+        backup="{OUTDIR}/{species}_EarlGrey/{species}.bak.gz"
     params:
         script_dir=SCRIPT_DIR
     shell:
         """
-        cp {input.genome} {input.genome}.bak && gzip -f {input.genome}.bak
-        sed '/>/ s/[[:space:]].*//g; /^$/d' {input.genome} > {input.genome}.tmp
-        {params.script_dir}/headSwap.sh -i {input.genome}.tmp -o {output.gen_prep} && rm {input.genome}.tmp
-        mv {input.genome}.tmp.dict {output.gen_dict}
+        # Create backup of original genome in output directory
+        cp {input.genome} {output.gen_prep}.orig
+        gzip -c {output.gen_prep}.orig > {output.backup}
+        
+        # Process genome
+        sed '/>/ s/[[:space:]].*//g; /^$/d' {output.gen_prep}.orig > {output.gen_prep}.tmp
+        {params.script_dir}/headSwap.sh -i {output.gen_prep}.tmp -o {output.gen_prep}
+        rm {output.gen_prep}.tmp {output.gen_prep}.orig
+        
+        # Move dictionary file
+        mv {output.gen_prep}.tmp.dict {output.gen_dict}
+        
+        # Replace ambiguous nucleotides
         sed -i.bak '/^>/! s/[DVHBPE]/N/g' {output.gen_prep}
-
+        rm {output.gen_prep}.bak
         """
 
 def get_masked_genome_input(wildcards):
     """Return appropriate input based on config settings"""
     if REPSPEC:
-        return f"{wildcards.outdir}/{wildcards.species}_EarlGrey/{wildcards.species}_RepeatMasker/{wildcards.species}.masked"
+        return f"{wildcards.outdir}/{wildcards.species}_EarlGrey/{wildcards.species}_RepeatMasker/{wildcards.species}.prep.masked"
     elif CUSTOM_LIB:
-        return f"{wildcards.outdir}/{wildcards.species}_EarlGrey/{wildcards.species}_RepeatMasker/{wildcards.species}.masked"
+        return f"{wildcards.outdir}/{wildcards.species}_EarlGrey/{wildcards.species}_RepeatMasker/{wildcards.species}.prep.masked"
     else:
         # No masking needed, use prep genome directly
         return f"{wildcards.outdir}/{wildcards.species}_EarlGrey/{wildcards.species}.prep"
@@ -61,18 +71,20 @@ rule repeatmasker:
     input:
         genome="{outdir}/{species}_EarlGrey/{species}.prep"
     output:
-        masked="{outdir}/{species}_EarlGrey/{species}_RepeatMasker/{species}.masked"
+        masked="{outdir}/{species}_EarlGrey/{species}_RepeatMasker/{species}.prep.masked"
     params:
-        outdir=OUTDIR,
+        outdir="{outdir}/{species}_EarlGrey/{species}_RepeatMasker",
         rep_spec=REPSPEC,
         threads=int(THREADS/4)
     shell:
         """
+        mkdir -p {params.outdir}
+        cd {params.outdir}
         RepeatMasker \
            -species {params.rep_spec} \
            -norna -no_is -lcambig -s -a -pa {params.threads} \
-           -dir {params.outdir}/{wildcards.species}_EarlGrey/{wildcards.species}_RepeatMasker \
-           {input.genome}
+           -dir {params.outdir} \
+           $(realpath {input.genome})
         """
 
 rule repeatmasker_custom:
@@ -80,17 +92,19 @@ rule repeatmasker_custom:
         genome="{outdir}/{species}_EarlGrey/{species}.prep",
         lib=CUSTOM_LIB
     output:
-        masked="{outdir}/{species}_EarlGrey/{species}_RepeatMasker/{species}.masked"
+        masked="{outdir}/{species}_EarlGrey/{species}_RepeatMasker/{species}.prep.masked"
     params:
-        threads=int(THREADS/4),
-        outdir=OUTDIR
+        outdir="{outdir}/{species}_EarlGrey/{species}_RepeatMasker",
+        threads=int(THREADS/4)
     shell:
         """
+        mkdir -p {params.outdir}
+        cd {params.outdir}
         RepeatMasker \
-            -lib {input.lib} \
+            -lib $(realpath {input.lib}) \
             -norna -no_is -lcambig -s -a -pa {params.threads} \
-            -dir {params.outdir}/{wildcards.species}_RepeatMasker \
-            {input.genome}
+            -dir {params.outdir} \
+            $(realpath {input.genome})
         """
 
 rule extract_repeatmasker_library:

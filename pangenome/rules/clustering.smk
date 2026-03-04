@@ -10,16 +10,19 @@ rule cluster_all_species:
         threads=THREADS,
         outdir=OUTDIR,
         species=SPECIES_LIST,
-        repspec=REPSPEC
+        repspec=REPSPEC,
+        skip_clustering=config.get("skip_clustering", False),
+        cluster_identity=config.get("clustering_identity", 0.8),
+        cluster_coverage=config.get("clustering_coverage", 0.8)
     run:
         import os
         shell("mkdir -p {params.outdir}/combinedLibraries")
         
-        # Define temporary input file path
-        tmp_file = f"{params.outdir}/combinedLibraries/combined_all_species.fa"
+        # Define combined file path
+        combined_file = f"{params.outdir}/combinedLibraries/combined_all_species.fa"
         
-        # Create temporary file with genome-prefixed sequences
-        with open(tmp_file, 'w') as outf:
+        # Create combined file with genome-prefixed sequences
+        with open(combined_file, 'w') as outf:
             # Add strained sequences with genome prefix
             for i, species in enumerate(params.species):
                 with open(input.strained[i], 'r') as inf:
@@ -47,10 +50,17 @@ rule cluster_all_species:
                         else:
                             outf.write(line)
         
-        # Run single cd-hit-est clustering
-        shell(f"cd-hit-est -d 0 -aS 0.8 -c 0.8 -G 0 -g 1 -b 500 -r 1 "
-              f"-i {tmp_file} -o {{output.combined}} "
-              f"-M 16000 -T {{params.threads}}")
-        
-        # Clean up intermediate files
-        shell(f"rm -f {tmp_file}")
+        # Cluster or skip based on config
+        if params.skip_clustering:
+            # Just copy/rename the combined file as the output (no clustering)
+            shell(f"cp {combined_file} {{output.combined}}")
+            shell(f"rm -f {combined_file}")
+        else:
+            # Run cd-hit-est clustering with config parameters
+            shell(f"cd-hit-est -d 0 -aS {{params.cluster_coverage}} -c {{params.cluster_identity}} "
+                  f"-G 0 -g 1 -b 500 -r 1 "
+                  f"-i {combined_file} -o {{output.combined}} "
+                  f"-M 16000 -T {{params.threads}}")
+            
+            # Clean up intermediate files
+            shell(f"rm -f {combined_file} {{output.combined}}.clstr")
