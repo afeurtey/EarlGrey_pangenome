@@ -6,8 +6,10 @@ rule cluster_all_species:
         custom=CUSTOM_LIB if CUSTOM_LIB else []
     output:
         combined="{outdir}/combinedLibraries/combined_all_species.clstrd.fa"
+    threads: workflow.cores  # Clustering can use all available cores
+    resources:
+        mem_mb=lambda wildcards, attempt: 16000 * attempt  # 16GB for cd-hit, scales with retries
     params:
-        threads=THREADS,
         outdir=OUTDIR,
         species=SPECIES_LIST,
         repspec=REPSPEC,
@@ -60,7 +62,7 @@ rule cluster_all_species:
             shell(f"cd-hit-est -d 0 -aS {{params.cluster_coverage}} -c {{params.cluster_identity}} "
                   f"-G 0 -g 1 -b 500 -r 1 "
                   f"-i {combined_file} -o {{output.combined}} "
-                  f"-M 16000 -T {{params.threads}}")
+                  f"-M {{resources.mem_mb}} -T {{threads}}")
             
             # Clean up intermediate files
-            shell(f"rm -f {combined_file} {{output.combined}}.clstr")
+            shell(f"rm -f {combined_file}")

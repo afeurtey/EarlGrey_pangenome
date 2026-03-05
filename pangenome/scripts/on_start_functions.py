@@ -63,7 +63,6 @@ def validate_parameters(config, outfile = None):
 
     # ---- Defaults + messages ----
     defaults = {
-        'threads': (1, "{} cores will be used"),
         'iterations': (10, "De Novo Sequences will be extended through a maximum of {} iterations"),
         'max_consensus_seqs': (20, "{} sequences will be used in BEAT consensus generation"),
         'skip_clustering': (False, None),

@@ -3,7 +3,6 @@ import os
 GENOME = config["genome"]
 SPECIES_LIST = config["species"]
 OUTDIR = config["output_dir"] #os.path.join(config["output_dir"], f"{SPECIES}_EarlGrey")
-THREADS = config["threads"]
 REPSPEC = config["repeatmasker_species"]
 CUSTOM_LIB = config["custom_library"]
 ITER = config["iterations"]
@@ -47,14 +46,14 @@ rule prep_genome:
         # Process genome
         sed '/>/ s/[[:space:]].*//g; /^$/d' {output.gen_prep}.orig > {output.gen_prep}.tmp
         {params.script_dir}/headSwap.sh -i {output.gen_prep}.tmp -o {output.gen_prep}
-        rm {output.gen_prep}.tmp {output.gen_prep}.orig
+        rm -f {output.gen_prep}.tmp {output.gen_prep}.orig
         
         # Move dictionary file
         mv {output.gen_prep}.tmp.dict {output.gen_dict}
         
         # Replace ambiguous nucleotides
         sed -i.bak '/^>/! s/[DVHBPE]/N/g' {output.gen_prep}
-        rm {output.gen_prep}.bak
+        rm -f {output.gen_prep}.bak
         """
 
 def get_masked_genome_input(wildcards):
@@ -72,17 +71,18 @@ rule repeatmasker:
         genome="{outdir}/{species}_EarlGrey/{species}.prep"
     output:
         masked="{outdir}/{species}_EarlGrey/{species}_RepeatMasker/{species}.prep.masked"
+    threads: lambda wildcards: max(4, workflow.cores // 4)  # Reserve actual threads (min 4 since -pa 1 uses 4)
     params:
         outdir="{outdir}/{species}_EarlGrey/{species}_RepeatMasker",
         rep_spec=REPSPEC,
-        threads=int(THREADS/4)
+        rm_threads=lambda wildcards, threads: max(1, threads // 4)  # RepeatMasker -pa value (uses 4x this)
     shell:
         """
         mkdir -p {params.outdir}
         cd {params.outdir}
         RepeatMasker \
            -species {params.rep_spec} \
-           -norna -no_is -lcambig -s -a -pa {params.threads} \
+           -norna -no_is -lcambig -s -a -pa {params.rm_threads} \
            -dir {params.outdir} \
            $(realpath {input.genome})
         """
@@ -93,16 +93,17 @@ rule repeatmasker_custom:
         lib=CUSTOM_LIB
     output:
         masked="{outdir}/{species}_EarlGrey/{species}_RepeatMasker/{species}.prep.masked"
+    threads: lambda wildcards: max(4, workflow.cores // 4)  # Reserve actual threads (min 4 since -pa 1 uses 4)
     params:
         outdir="{outdir}/{species}_EarlGrey/{species}_RepeatMasker",
-        threads=int(THREADS/4)
+        rm_threads=lambda wildcards, threads: max(1, threads // 4)  # RepeatMasker -pa value (uses 4x this)
     shell:
         """
         mkdir -p {params.outdir}
         cd {params.outdir}
         RepeatMasker \
             -lib $(realpath {input.lib}) \
-            -norna -no_is -lcambig -s -a -pa {params.threads} \
+            -norna -no_is -lcambig -s -a -pa {params.rm_threads} \
             -dir {params.outdir} \
             $(realpath {input.genome})
         """
@@ -154,14 +155,16 @@ rule repeatmodeler:
         nsq="{outdir}/{species}_EarlGrey/{species}_Database/{species}.nsq"
     output:
         families="{outdir}/{species}_EarlGrey/{species}_Database/{species}-families.fa"
+    threads: workflow.cores  # Use all available cores
+    resources:
+        mem_mb=lambda wildcards, attempt: 16000 * attempt  # 16GB, scales with retries
     params:
         db_dir="{outdir}/{species}_EarlGrey/{species}_Database",
-        db_name="{species}",
-        threads=THREADS
+        db_name="{species}"
     shell:
         """
         cd {params.db_dir}
-        RepeatModeler -threads {params.threads} -database {params.db_name}
+        RepeatModeler -threads {threads} -database {params.db_name}
         """
 
 rule testrainer:
@@ -171,9 +174,11 @@ rule testrainer:
     output:
         strained="{outdir}/{species}_EarlGrey/{species}_strainer/{species}-families.fa.strained",
         summary="{outdir}/{species}_EarlGrey/{species}_summaryFiles/{species}-families.fa.strained"
+    threads: workflow.cores  # Use all available cores
+    resources:
+        mem_mb=lambda wildcards, attempt: 8000 * attempt  # 8GB, scales with retries
     params:
         outdir=OUTDIR,
-        threads=int(THREADS/4),
         flank=FLANK,
         iter=ITER,
         max_seq=MAX_SEQ,
@@ -186,7 +191,7 @@ rule testrainer:
         cd {params.strainer_dir}
         {params.script_dir}/TEstrainer/TEstrainer_for_earlGrey.sh \
            -g {input.genome} -l {input.families} \
-           -t {params.threads} -f {params.flank} \
+           -t {threads} -f {params.flank} \
            -r {params.iter} -n {params.max_seq} \
            -m {params.min_seq}
 

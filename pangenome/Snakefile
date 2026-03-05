@@ -11,9 +11,6 @@ from scripts.on_start_functions import (
 )
 
 configfile: "config/config.yaml"
-include: "rules/lib_construct.smk"
-include: "rules/clustering.smk"
-include: "rules/annotate.smk"
 
 
 # Apply at parse time
@@ -25,7 +22,6 @@ config = validate_parameters(
 GENOME = config["genome"]
 SPECIES_LIST = config["species"]
 OUTDIR = config["output_dir"] #os.path.join(config["output_dir"], f"{SPECIES}_EarlGrey")
-THREADS = config["threads"]
 REPSPEC = config["repeatmasker_species"]
 CUSTOM_LIB = config["custom_library"]
 ITER = config["iterations"]
@@ -34,8 +30,16 @@ MAX_SEQ = config["max_consensus_seqs"]
 MIN_SEQ = config["min_consensus_seqs"]
 SCRIPT_DIR = config["script_dir"]
 HELI = config.get("run_heliano", False)
-SOFTMASK = config.get("softmask", False)
-MARGIN = config.get("margin", False)
+# Convert boolean to string for shell compatibility
+_softmask_val = config.get("softmask", False)
+SOFTMASK = "yes" if (_softmask_val is True or _softmask_val == "yes") else "no"
+_margin_val = config.get("margin", False)
+MARGIN = "yes" if (_margin_val is True or _margin_val == "yes") else "no"
+
+# Include rules after all global variables are defined
+include: "rules/lib_construct.smk"
+include: "rules/clustering.smk"
+include: "rules/annotate.smk"
 
 onstart:
     # Display tea art

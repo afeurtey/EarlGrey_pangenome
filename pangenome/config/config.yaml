@@ -1,15 +1,18 @@
+# EarlGrey Pangenome Pipeline Configuration
+# Run with: snakemake --cores N (where N = number of cores to use)
+# Example: snakemake --cores 16
+
 genome:
-  genome_1: /data/toby/EarlGrey_pangenome/test/genome1.fasta
-  genome_2: /data/toby/EarlGrey_pangenome/test/genome2.fasta
-species: [genome_1, genome_2]
-output_dir: /data/toby/EarlGrey_pangenome/test/unit_test_4_NUMERICPARAMS
-threads: 16
+  IPO323: /data/toby/EarlGrey_pangenome/test/IPO323.fa
+  1A5: /data/toby/EarlGrey_pangenome/test/1A5.fa
+species: [IPO323, 1A5]
+output_dir: /data/toby/EarlGrey_pangenome/test/unit_test_10_CPU_MEMORY
 repeatmasker_species: ""  # e.g. "arthropoda" or "" for none
 custom_library: ""        # path to custom library or "" for none
-iterations: 15
-flank: 2000
-max_consensus_seqs: 30
-min_consensus_seqs: 5
+iterations: 10
+flank: 1000
+max_consensus_seqs: 20
+min_consensus_seqs: 3
 
 # Clustering options (for combining TE libraries from multiple genomes)
 skip_clustering: False  # Set to True to skip clustering (just concatenate all libraries)

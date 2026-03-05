@@ -631,14 +631,6 @@ repeatmasker_species: "fungi"
 - Check final outputs have all expected files
 - Validation messages report all options correctly
 
-#### 7. **Help/Documentation Feature**
-**Status:** Not yet implemented
-**Need to determine:** 
-- Should this be a separate script?
-- Integrated into Snakefile (e.g., `snakemake --help`)?
-- Separate documentation file?
-- Command-line argument parsing?
-
 ### Recommended Testing Order
 
 1. **Unit Test 4** (numeric parameters) - validates basic parameter passing
@@ -647,7 +639,6 @@ repeatmasker_species: "fungi"
 4. **Unit Test 5** (skip clustering) - validates major new feature
 5. **Unit Test 6** (clustering parameters) - builds on test 5
 6. **Unit Test 9** (combined) - integration test
-7. **Help feature** - implement and test last
 
 ### Quick Test Commands
 
@@ -658,3 +649,614 @@ snakemake --cores 1 --dry-run  # Check validation messages
 snakemake --cores 16            # Run pipeline
 # Verify outputs as described above
 ```
+
+### Unit Test 7: Softmasked Genome Generation
+To test the softmasked genome generation, I will set `softmask: True` in the config file and run the pipeline. I will check that the `.softmasked.fasta` files are created in the `{species}_summaryFiles/` directories for each input genome. I will verify thatthe repeat regions are correctly softmasked (lowercase) and non-repeat regions are uppercase. I will also confirm that the workflow requests these files by checking the DAG.
+
+```yaml
+genome:
+  genome_1: /data/toby/EarlGrey_pangenome/test/genome1.fasta
+  genome_2: /data/toby/EarlGrey_pangenome/test/genome2.fasta
+species: [genome_1, genome_2]
+output_dir: /data/toby/EarlGrey_pangenome/test/unit_test_7_SOFTMASK
+threads: 8
+repeatmasker_species: ""  # e.g. "arthropoda" or "" for none
+custom_library: ""        # path to custom library or "" for none
+iterations: 10
+flank: 1000
+max_consensus_seqs: 20
+min_consensus_seqs: 3
+
+# Clustering options (for combining TE libraries from multiple genomes)
+skip_clustering: False  # Set to True to skip clustering (just concatenate all libraries)
+clustering_identity: 0.8  # cd-hit sequence identity threshold (0.0-1.0, default 0.8)
+clustering_coverage: 0.8  # cd-hit alignment coverage for shorter sequence (0.0-1.0, default 0.8)
+
+# Output options
+softmask: True  # Set to True to generate softmasked genome for each input
+margin: False  # Set to True to remove short TE sequences (<100bp)
+
+script_dir: /data/toby/miniforge3/envs/earlgrey-pan-dev/share/earlgrey-7.0.3-0/scripts
+run_heliano: True
+```
+
+```bash
+# first make the DAG to confirm the softmasked genome files are requested
+mkdir -p /data/toby/EarlGrey_pangenome/test/unit_test_7_SOFTMASK
+snakemake --cores 1 --dag 2>&1 | sed -n '/^digraph/,$p' > /data/toby/EarlGrey_pangenome/test/unit_test_7_SOFTMASK/temp.txt
+cat /data/toby/EarlGrey_pangenome/test/unit_test_7_SOFTMASK/temp.txt | dot -Tsvg > /data/toby/EarlGrey_pangenome/test/unit_test_7_SOFTMASK/dag.svg
+
+# run the pipeline
+snakemake --cores 8
+```
+
+The softmasked files were generated, but are empty. I have run some fixes and will try again.
+
+**Issue Fixed (March 5, 2026):** Softmasked genome files were being created but were empty (0 bytes).
+
+**Root Causes Identified:**
+1. **Config file conflict**: The `annotate.smk` file had a `configfile: "config/config.yaml"` directive at the top, which was overriding the custom config passed via command line. This meant `softmask: true` from the test config wasn't being read.
+
+2. **Variable scoping issue**: `SOFTMASK` and `MARGIN` variables were being defined in `annotate.smk` after the `include:` statements in the main `Snakefile`. This caused:
+   - Variables to be undefined when rules in `annotate.smk` were parsed
+   - Shell command receiving Python boolean `True` instead of string `"yes"`, failing the `if [ "True" == "yes" ]` test
+
+**Solution Applied:**
+Modified three files to fix variable scoping and config loading:
+
+1. **`pangenome/rules/annotate.smk`**:
+   - Removed `configfile: "config/config.yaml"` directive (line 3)
+   - Removed duplicate `SOFTMASK` and `MARGIN` variable definitions (lines 12-13)
+   - Added comment noting these variables are now defined in main Snakefile
+
+2. **`pangenome/Snakefile`**:
+   - Added boolean-to-string conversion for `SOFTMASK` and `MARGIN` before `include:` statements:
+     ```python
+     _softmask_val = config.get("softmask", False)
+     SOFTMASK = "yes" if (_softmask_val is True or _softmask_val == "yes") else "no"
+     _margin_val = config.get("margin", False)
+     MARGIN = "yes" if (_margin_val is True or _margin_val == "yes") else "no"
+     ```
+   - Moved all `include:` statements to **after** all global variables are defined
+   - This ensures `SOFTMASK` and `MARGIN` are available when `annotate.smk` is parsed
+
+3. **Rule execution verified**:
+   - Checked log files confirmed shell command now receives: `if [ "yes" == "yes" ]`
+   - bedtools maskfasta executes correctly with proper inputs
+
+```bash
+snakemake --cores 8
+```
+
+**Result:** Softmasked genome files now generate correctly:
+- Each file: **11M** in size (~10.6M bases)
+- Contains properly softmasked sequences with lowercase bases indicating repeat regions
+- Verified with `grep -o "[atcgn]"` showing lowercase repeat masking present
+
+**Unit Test 7: ✓ PASSED**
+
+### Unit Test 8: Margin (Remove Short TEs)
+To test the margin feature that removes short TE annotations, I will set `margin: True` in the config file and run the pipeline. I will compare the `.filteredRepeats.bed` files generated with `margin: True` vs `margin: False` to confirm that all annotations <100bp are removed when margin is enabled. I will also check the statistics to see that the total repeat count and coverage (bp) are reduced when margin is applied.
+
+```yaml
+genome:
+  genome_1: /data/toby/EarlGrey_pangenome/test/genome1.fasta
+  genome_2: /data/toby/EarlGrey_pangenome/test/genome2.fasta
+species: [genome_1, genome_2]
+output_dir: /data/toby/EarlGrey_pangenome/test/unit_test_8_MARGIN
+threads: 8
+repeatmasker_species: ""  # e.g. "arthropoda" or "" for none
+custom_library: ""        # path to custom library or "" for none
+iterations: 10
+flank: 1000
+max_consensus_seqs: 20
+min_consensus_seqs: 3
+
+# Clustering options (for combining TE libraries from multiple genomes)
+skip_clustering: False  # Set to True to skip clustering (just concatenate all libraries)
+clustering_identity: 0.8  # cd-hit sequence identity threshold (0.0-1.0, default 0.8)
+clustering_coverage: 0.8  # cd-hit alignment coverage for shorter sequence (0.0-1.0, default 0.8)
+
+# Output options
+softmask: False  # Set to True to generate softmasked genome for each input
+margin: True  # Set to True to remove short TE sequences (<100bp)
+
+script_dir: /data/toby/miniforge3/envs/earlgrey-pan-dev/share/earlgrey-7.0.3-0/scripts
+run_heliano: True
+```
+
+```bash
+snakemake --cores 8
+```
+
+This worked as expected and all annotations <100bp were removed from the `.filteredRepeats.bed` files. The total repeat count and coverage were reduced compared to a run with `margin: False`. I can confirm that the margin feature is functioning correctly when enabled.
+
+### Unit Test 5: Skip Clustering
+To test the skip clustering feature, I will set `skip_clustering: True` in the config file and run the pipeline. I will check that the `combined_all_species.clstrd.fa` file is created and contains all sequences from all genomes without any reduction. I will compare the sequence count in the input (sum of all strains) to the output to confirm they match. I will also verify that no `.clstr` file is generated and that annotation still works with the unclustered library.
+
+```yaml
+genome:
+  genome_1: /data/toby/EarlGrey_pangenome/test/genome1.fasta
+  genome_2: /data/toby/EarlGrey_pangenome/test/genome2.fasta
+species: [genome_1, genome_2]
+output_dir: /data/toby/EarlGrey_pangenome/test/unit_test_5_SKIP_CLUSTERING
+threads: 8
+repeatmasker_species: ""  # e.g. "arthropoda" or "" for none
+custom_library: ""        # path to custom library or "" for none
+iterations: 10
+flank: 1000
+max_consensus_seqs: 20
+min_consensus_seqs: 3
+
+# Clustering options (for combining TE libraries from multiple genomes)
+skip_clustering: True  # Set to True to skip clustering (just concatenate all libraries)
+clustering_identity: 0.8  # cd-hit sequence identity threshold (0.0-1.0, default 0.8)
+clustering_coverage: 0.8  # cd-hit alignment coverage for shorter sequence (0.0-1.0, default 0.8)
+
+# Output options
+softmask: False  # Set to True to generate softmasked genome for each input
+margin: False  # Set to True to remove short TE sequences (<100bp)
+
+script_dir: /data/toby/miniforge3/envs/earlgrey-pan-dev/share/earlgrey-7.0.3-0/scripts
+run_heliano: True
+```
+
+```bash
+# check DAG to confirm combined_all_species.clstrd.fa is requested and no .clstr file is generated
+mkdir -p /data/toby/EarlGrey_pangenome/test/unit_test_5_SKIP_CLUSTERING
+snakemake --cores 1 --dag 2>&1 | sed -n '/^digraph/,$p' > /data/toby/EarlGrey_pangenome/test/unit_test_5_SKIP_CLUSTERING/temp.txt
+cat /data/toby/EarlGrey_pangenome/test/unit_test_5_SKIP_CLUSTERING/temp.txt | dot -Tsvg > /data/toby/EarlGrey_pangenome/test/unit_test_5_SKIP_CLUSTERING/dag.svg
+
+# run the pipeline
+snakemake --cores 8
+```
+
+This worked as expected. The `combined_all_species.clstrd.fa` file was created and contains all sequences from both genomes without any reduction. The sequence count in the output matches the sum of all strains from the input libraries. No `.clstr` file was generated, confirming that clustering was skipped. Annotation still worked successfully with the unclustered library. I can confirm that the skip clustering feature is functioning correctly when enabled.
+
+### Unit Test 6: Custom Clustering Parameters
+To test the custom clustering parameters, I will set `skip_clustering: False` and adjust the `clustering_identity` and `clustering_coverage` parameters in the config file. I will run the pipeline with more stringent (e.g., 0.95/0.90). I will also check the cd-hit log files to confirm that the correct parameters were used.
+
+```yaml
+genome:
+  genome_1: /data/toby/EarlGrey_pangenome/test/genome1.fasta
+  genome_2: /data/toby/EarlGrey_pangenome/test/genome2.fasta
+species: [genome_1, genome_2]
+output_dir: /data/toby/EarlGrey_pangenome/test/unit_test_6_CUSTOM_CLUSTERING
+threads: 8
+repeatmasker_species: ""  # e.g. "arthropoda" or "" for none
+custom_library: ""        # path to custom library or "" for none
+iterations: 10
+flank: 1000
+max_consensus_seqs: 20
+min_consensus_seqs: 3
+
+# Clustering options (for combining TE libraries from multiple genomes)
+skip_clustering: False  # Set to True to skip clustering (just concatenate all libraries)
+clustering_identity: 0.95  # cd-hit sequence identity threshold (0.0-1.0, default 0.8)
+clustering_coverage: 0.90  # cd-hit alignment coverage for shorter sequence (0.0-1.0, default 0.8)
+
+# Output options
+softmask: False  # Set to True to generate softmasked genome for each input
+margin: False  # Set to True to remove short TE sequences (<100bp)
+
+script_dir: /data/toby/miniforge3/envs/earlgrey-pan-dev/share/earlgrey-7.0.3-0/scripts
+run_heliano: True
+```
+
+```bash
+snakemake --cores 8
+```
+
+This worked as expected. The output library size was larger compared to the default parameters, indicating that fewer sequences were clustered together due to the more stringent identity and coverage thresholds. The cd-hit log files confirmed that the correct parameters (0.95 identity and 0.90 coverage) were used during clustering. I can confirm that the custom clustering parameters are functioning correctly when enabled.
+
+### Unit Test 9: Combined Options Test
+To test the combined options, I will set multiple parameters in the config file (e.g., `skip_clustering: True`, `softmask: True`, `margin: True`, `run_heliano: True`, `repeatmasker_species: "fungi"`). I will run the pipeline and check that all features work together without conflicts. I will verify that the final outputs contain all expected files and that the validation messages report all options correctly.
+
+I will need to use IPO323 and 1A5 for this test to ensure there are enough sequences for RepeatModeler to run successfully with the fungi library.
+
+```yaml
+genome:
+  IPO323: /data/toby/EarlGrey_pangenome/test/IPO323.fa
+  1A5: /data/toby/EarlGrey_pangenome/test/1A5.fa
+species: [IPO323, 1A5]
+output_dir: /data/toby/EarlGrey_pangenome/test/unit_test_9_COMBINED_OPTIONS
+threads: 16
+repeatmasker_species: "fungi"  # e.g. "arthropoda" or "" for none
+custom_library: ""        # path to custom library or "" for none
+iterations: 10
+flank: 1000
+max_consensus_seqs: 20
+min_consensus_seqs: 3
+
+# Clustering options (for combining TE libraries from multiple genomes)
+skip_clustering: True  # Set to True to skip clustering (just concatenate all libraries)
+clustering_identity: 0.8  # cd-hit sequence identity threshold (0.0-1.0, default 0.8)
+clustering_coverage: 0.8  # cd-hit alignment coverage for shorter sequence (0.0-1.0, default 0.8)
+
+# Output options
+softmask: True  # Set to True to generate softmasked genome for each input
+margin: True  # Set to True to remove short TE sequences (<100bp)
+
+script_dir: /data/toby/miniforge3/envs/earlgrey-pan-dev/share/earlgrey-7.0.3-0/scripts
+run_heliano: True
+```
+
+```bash
+snakemake --cores 16
+```
+
+This worked as expected. All features worked together without conflicts, and the final outputs contained all expected files. The validation messages correctly reported all options that were enabled in the config file. I can confirm that the combined options are functioning correctly when enabled together.
+
+## March 5, 2026 - Optimising cores and memory usage using snakemake schedule and resources
+
+I want to make it so the user only specifies threads in the snakemake command so that snakemake can scale and parallelise correctly. I have implemented these changes and now need to test that these work as expected.
+
+```yaml
+# EarlGrey Pangenome Pipeline Configuration
+# Run with: snakemake --cores N (where N = number of cores to use)
+# Example: snakemake --cores 16
+
+genome:
+  IPO323: /data/toby/EarlGrey_pangenome/test/IPO323.fa
+  1A5: /data/toby/EarlGrey_pangenome/test/1A5.fa
+species: [IPO323, 1A5]
+output_dir: /data/toby/EarlGrey_pangenome/test/unit_test_10_CPU_MEMORY
+repeatmasker_species: ""  # e.g. "arthropoda" or "" for none
+custom_library: ""        # path to custom library or "" for none
+iterations: 10
+flank: 1000
+max_consensus_seqs: 20
+min_consensus_seqs: 3
+
+# Clustering options (for combining TE libraries from multiple genomes)
+skip_clustering: False  # Set to True to skip clustering (just concatenate all libraries)
+clustering_identity: 0.8  # cd-hit sequence identity threshold (0.0-1.0, default 0.8)
+clustering_coverage: 0.8  # cd-hit alignment coverage for shorter sequence (0.0-1.0, default 0.8)
+
+# Output options
+softmask: False  # Set to True to generate softmasked genome for each input
+margin: False  # Set to True to remove short TE sequences (<100bp)
+
+script_dir: /data/toby/miniforge3/envs/earlgrey-pan-dev/share/earlgrey-7.0.3-0/scripts
+run_heliano: True
+```
+
+### Testing Resource Allocation
+
+To verify that CPU and memory allocation is working correctly, we need to test multiple scenarios and check that Snakemake is properly scheduling jobs based on resource constraints.
+
+#### Test 1: Basic Execution Without Memory Constraints
+
+```bash
+cd /data/toby/EarlGrey_pangenome/pangenome
+snakemake --configfile ../test/unit_test_10_CPU_MEMORY/config.yaml \
+  --cores 16 --dry-run -p
+```
+
+**Expected output:**
+Look for lines showing thread allocation per rule in the job stats summary. RepeatMasker should show 4 threads (accounting for the 4× multiplier), while RepeatModeler and TEstrainer should show 16.
+
+#### Test 2: Execution With Memory Constraints
+
+```bash
+# Run with both cores and memory limits (simulating 16 cores, 64GB RAM)
+snakemake --configfile ../test/unit_test_10_CPU_MEMORY/config.yaml \
+  --cores 16 --resources mem_mb=64000 --dry-run -p
+```
+
+**Expected behavior:**
+- RepeatModeler (16GB each): Max 4 could run, but cores limit to 1
+- TEstrainer (8GB each): Max 8 could run, but cores limit to 1  
+- RepeatMasker (4 cores, ~2GB): Max 4 can run (cores: 16÷4=4, mem: 64÷2=32)
+
+#### Test 3: Actual Run With Resource Tracking
+
+```bash
+# Create test directory
+mkdir -p /data/toby/EarlGrey_pangenome/test/unit_test_10_CPU_MEMORY
+
+# Copy config to test directory
+cp /data/toby/EarlGrey_pangenome/pangenome/config/config.yaml \
+   /data/toby/EarlGrey_pangenome/test/unit_test_10_CPU_MEMORY/config.yaml
+
+# Edit the config as shown above (or use the config already prepared)
+
+# Run the actual pipeline with resource monitoring
+cd /data/toby/EarlGrey_pangenome/pangenome
+snakemake --configfile ../test/unit_test_10_CPU_MEMORY/config.yaml \
+  --cores 16 --resources mem_mb=64000 \
+  --printshellcmds \
+  --reason \
+  2>&1 | tee ../test/unit_test_10_CPU_MEMORY/resource_test.log
+```
+
+#### Verification Commands
+
+**1. Check Thread Allocation in Logs**
+
+```bash
+# Verify RepeatMasker thread allocation
+grep "RepeatMasker.*-pa" ../test/unit_test_10_CPU_MEMORY/resource_test.log
+
+# Expected: Should see -pa 1, -pa 2, or -pa 4 (which uses 4, 8, or 16 actual threads)
+# Example: RepeatMasker ... -pa 1 ...
+```
+
+**2. Check Parallel Job Execution**
+
+```bash
+# Extract job start times to see parallel execution
+grep -E "rule (repeatmasker|testrainer|repeatmodeler)" \
+  .snakemake/log/*.snakemake.log | tail -20
+```
+
+**Expected pattern for RepeatMasker:**
+Multiple jobs starting at similar times = parallel execution ✓
+
+**3. Check Resource Usage During Execution** (optional, run in separate terminal)
+
+```bash
+# Monitor actual resource usage while pipeline runs
+watch -n 2 'ps aux | grep -E "(RepeatMasker|RepeatModeler|TEstrainer|cd-hit)" | grep -v grep'
+```
+
+**4. Verify Memory Limits Were Respected**
+
+```bash
+# Check if any jobs were killed due to OOM
+grep -i "memory\|killed\|oom" ../test/unit_test_10_CPU_MEMORY/resource_test.log
+
+# Check job retry attempts (if memory was insufficient)
+grep "Retrying" ../test/unit_test_10_CPU_MEMORY/resource_test.log
+```
+
+**Expected:** No OOM errors if memory was sufficient, or successful retries with increased memory
+
+**5. Verify RepeatMasker Thread Math**
+
+```bash
+# Extract RepeatMasker commands from log
+cd /data/toby/EarlGrey_pangenome/test/unit_test_10_CPU_MEMORY
+grep "RepeatMasker.*-pa" resource_test.log | while read line; do
+    # Extract -pa value
+    pa_value=$(echo "$line" | grep -oP '(?<=-pa )\d+')
+    actual_threads=$((pa_value * 4))
+    echo "RepeatMasker -pa $pa_value → uses $actual_threads threads"
+done | sort -u
+```
+
+**Expected output:**
+```
+RepeatMasker -pa 1 → uses 4 threads
+RepeatMasker -pa 2 → uses 8 threads  (if running with more cores)
+RepeatMasker -pa 4 → uses 16 threads  (if running with 64+ cores)
+```
+
+**6. Verify cd-hit Memory Parameter**
+
+```bash
+# Check cd-hit memory allocation
+grep "cd-hit-est.*-M" resource_test.log | head -1
+
+# Extract memory parameter
+grep -oP "cd-hit-est.*-M \K\d+" resource_test.log | head -1
+```
+
+**Expected:** Should match or be less than requested memory (e.g., 16000 for 16GB base × attempt)
+
+**7. Calculate Observed Parallelization**
+
+```bash
+# Count how many RepeatMasker jobs ran in parallel
+cat << 'EOF' > analyze_parallelization.py
+#!/usr/bin/env python3
+import sys
+import re
+from datetime import datetime
+from collections import defaultdict
+
+# Parse log file for job timings
+log_file = sys.argv[1] if len(sys.argv) > 1 else "resource_test.log"
+
+# Track job starts
+job_starts = []
+with open(log_file, 'r') as f:
+    for line in f:
+        # Match lines like: "[Wed Mar  5 10:00:00 2026] rule repeatmasker"
+        match = re.search(r'\[(.*?)\] rule (\w+)', line)
+        if match:
+            timestamp_str = match.group(1)
+            rule_name = match.group(2)
+            try:
+                # Try to parse timestamp
+                timestamp = datetime.strptime(timestamp_str, "%a %b %d %H:%M:%S %Y")
+                job_starts.append((timestamp, rule_name))
+            except:
+                pass
+
+# Group by rule
+rules = defaultdict(list)
+for ts, rule in job_starts:
+    rules[rule].append(ts)
+
+print("Job Parallelization Analysis:")
+print("=" * 60)
+for rule, times in sorted(rules.items()):
+    print(f"\n{rule}: {len(times)} job(s)")
+    if len(times) > 1:
+        times_sorted = sorted(times)
+        # Check if jobs started within 10 seconds (likely parallel)
+        first_time = times_sorted[0]
+        parallel = sum(1 for t in times_sorted if (t - first_time).seconds < 10)
+        print(f"  - {parallel} job(s) started within 10 seconds (parallel)")
+        
+EOF
+
+python3 analyze_parallelization.py
+```
+
+**Expected output example:**
+```
+Job Parallelization Analysis:
+============================================================
+
+repeatmasker: 4 jobs
+  - 4 jobs started within 10 seconds (parallel)
+
+testrainer: 4 jobs
+  - 1 jobs started within 10 seconds (parallel)  (memory-limited)
+
+repeatmodeler: 4 jobs
+  - 1 jobs started within 10 seconds (parallel)  (core-limited)
+```
+
+**8. Final Validation Checklist**
+
+```bash
+cd /data/toby/EarlGrey_pangenome/test/unit_test_10_CPU_MEMORY
+cat << 'EOF' > validation_checklist.sh
+#!/bin/bash
+
+echo "Resource Allocation Validation Checklist"
+echo "=========================================="
+echo ""
+
+PANGENOME_DIR="/data/toby/EarlGrey_pangenome/pangenome"
+TEST_DIR="/data/toby/EarlGrey_pangenome/test/unit_test_10_CPU_MEMORY"
+
+# 1. Check config has no threads parameter
+if grep -q "^threads:" "$TEST_DIR/config.yaml" 2>/dev/null; then
+    echo "❌ FAIL: threads parameter found in config.yaml"
+else
+    echo "✅ PASS: No threads parameter in config.yaml"
+fi
+
+# 2. Check RepeatMasker thread allocation
+if [ -f "$TEST_DIR/resource_test.log" ]; then
+    rm_threads=$(grep "RepeatMasker.*-pa" "$TEST_DIR/resource_test.log" | \
+                 grep -oP '(?<=-pa )\d+' | head -1)
+    if [ -n "$rm_threads" ]; then
+        actual=$((rm_threads * 4))
+        echo "✅ PASS: RepeatMasker using -pa $rm_threads ($actual actual threads)"
+    else
+        echo "⚠️  WARNING: No RepeatMasker -pa found in log"
+    fi
+else
+    echo "⚠️  WARNING: resource_test.log not found (pipeline not run yet)"
+fi
+
+# 3. Check resource directives exist in rules
+if grep -q "resources:" "$PANGENOME_DIR/rules/lib_construct.smk"; then
+    echo "✅ PASS: Resource directives found in lib_construct.smk"
+else
+    echo "❌ FAIL: No resource directives in lib_construct.smk"
+fi
+
+# 4. Check cd-hit memory parameter
+if grep -q 'cd-hit-est.*-M {resources.mem_mb}' "$PANGENOME_DIR/rules/clustering.smk"; then
+    echo "✅ PASS: cd-hit using dynamic memory allocation"
+else
+    echo "❌ FAIL: cd-hit not using resources.mem_mb"
+fi
+
+# 5. Check TEstrainer uses all cores
+if grep -q "threads: workflow.cores" "$PANGENOME_DIR/rules/lib_construct.smk"; then
+    echo "✅ PASS: TEstrainer configured to use all cores"
+else
+    echo "❌ FAIL: TEstrainer not using workflow.cores"
+fi
+
+# 6. Check for OOM errors
+if [ -f "$TEST_DIR/resource_test.log" ]; then
+    if grep -qi "out of memory\|oom\|killed.*memory" "$TEST_DIR/resource_test.log"; then
+        # Check if retries were successful
+        if grep -q "Retrying.*succeeded" "$TEST_DIR/resource_test.log"; then
+            echo "⚠️  WARNING: OOM occurred but retry succeeded"
+        else
+            echo "❌ FAIL: Out of memory errors detected"
+        fi
+    else
+        echo "✅ PASS: No OOM errors detected"
+    fi
+fi
+
+echo ""
+echo "Validation complete!"
+EOF
+
+chmod +x validation_checklist.sh
+./validation_checklist.sh
+```
+
+**Expected output:**
+```
+Resource Allocation Validation Checklist
+==========================================
+
+✅ PASS: No threads parameter in config.yaml
+✅ PASS: RepeatMasker using -pa 1 (4 actual threads)
+✅ PASS: Resource directives found in lib_construct.smk
+✅ PASS: cd-hit using dynamic memory allocation
+✅ PASS: TEstrainer configured to use all cores
+✅ PASS: No OOM errors detected
+
+Validation complete!
+```
+
+#### Test Different Resource Scenarios
+
+**Scenario 1: High-Core, Low-Memory (32 cores, 32GB)**
+```bash
+snakemake --configfile ../test/unit_test_10_CPU_MEMORY/config.yaml \
+  --cores 32 --resources mem_mb=32000
+```
+**Expected:** Fewer parallel memory-intensive jobs, RepeatModeler limited to 2 at a time
+
+**Scenario 2: Low-Core, High-Memory (8 cores, 128GB)**
+```bash
+snakemake --configfile ../test/unit_test_10_CPU_MEMORY/config.yaml \
+  --cores 8 --resources mem_mb=128000
+```
+**Expected:** Memory not limiting, but cores limit parallelization
+
+**Scenario 3: Balanced (64 cores, 256GB)**
+```bash
+snakemake --configfile ../test/unit_test_10_CPU_MEMORY/config.yaml \
+  --cores 64 --resources mem_mb=256000
+```
+**Expected:** Optimal parallelization, both cores and memory well-utilized
+
+### Summary of Resource Management Implementation
+
+**Key changes made:**
+1. Removed `threads` parameter from config.yaml
+2. Added `threads:` directives to all rules (using `workflow.cores` or calculated)
+3. Added `resources: mem_mb` to memory-intensive rules (RepeatModeler, TEstrainer, cd-hit, HELIANO, mergeRepeats, divergence calculation)
+4. Fixed RepeatMasker 4× thread multiplier issue (`-pa N` → uses `4N` threads)
+5. Implemented retry scaling for OOM scenarios (`lambda wildcards, attempt: base_memory * attempt`)
+
+**Benefits:**
+- Automatic resource scaling from laptop (8 cores, 16GB) to HPC (64+ cores, 256GB+)
+- Protection against memory exhaustion with automatic retry
+- Optimal parallelization based on available resources
+- Explicit documentation of resource needs in code
+- Proper handling of quirky tool behaviors (RepeatMasker thread multiplier)
+- Single point of control via `--cores` and `--resources` command line arguments
+
+**Unit Test 10: ✓ READY FOR TESTING** (code complete, pending verification run)
+
+---
+
+**March 5, 2026 (later) - Fixed Write-Protected File Removal Issue**
+
+**Issue:** Pipeline was stopping to ask permission to remove write-protected `.prep.orig` files during `prep_genome` step.
+
+**Root Cause:** Input genome files have read-only permissions (`-r-xr-xr-x`). When copied with `cp {input.genome} {output.gen_prep}.orig`, the copy inherits those permissions. When `rm` tries to remove write-protected files, it prompts for user confirmation, pausing the pipeline.
+
+**Solution:** Updated all `rm` commands to use `rm -f` (force removal without prompting):
+- [lib_construct.smk](rules/lib_construct.smk#L49): `rm -f {output.gen_prep}.tmp {output.gen_prep}.orig`
+- [lib_construct.smk](rules/lib_construct.smk#L56): `rm -f {output.gen_prep}.bak`
+- [annotate.smk](rules/annotate.smk#L197): `rm -f {input.backup}.tmp`
+
+This prevents interactive prompts when removing files with any permission settings.
+

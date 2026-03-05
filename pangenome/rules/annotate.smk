@@ -1,18 +1,10 @@
 import os
 
-configfile: "config/config.yaml"
-
-# Configuration variables
+# Configuration variables (SOFTMASK and MARGIN are defined in main Snakefile)
 GENOME = config["genome"]
 SPECIES_LIST = config["species"]
 OUTDIR = config["output_dir"]
-THREADS = config["threads"]
 REPSPEC = config.get("repeatmasker_species", None)
-# Handle boolean/string conversion for margin and softmask
-_margin_val = config.get("margin", False)
-MARGIN = "yes" if (_margin_val is True or _margin_val == "yes") else "no"
-_softmask_val = config.get("softmask", False)
-SOFTMASK = "yes" if (_softmask_val is True or _softmask_val == "yes") else "no"
 # Handle both heliano and run_heliano config keys, convert boolean to yes/no
 _heliano_val = config.get("heliano", config.get("run_heliano", False))
 HELIANO = "yes" if (_heliano_val is True or _heliano_val == "yes") else "no"
@@ -26,14 +18,15 @@ rule repeatmasker_annotation:
         masked="{outdir}/{species}_EarlGrey/{species}_RepeatMasker_Against_Custom_Library/{species}.prep.masked",
         out="{outdir}/{species}_EarlGrey/{species}_RepeatMasker_Against_Custom_Library/{species}.prep.out",
         tbl="{outdir}/{species}_EarlGrey/{species}_RepeatMasker_Against_Custom_Library/{species}.prep.tbl"
+    threads: lambda wildcards: max(4, workflow.cores // 4)  # Reserve actual threads (min 4 since -pa 1 uses 4)
     params:
         outdir="{outdir}/{species}_EarlGrey/{species}_RepeatMasker_Against_Custom_Library",
-        threads=lambda wildcards: int(THREADS/4)
+        rm_threads=lambda wildcards, threads: max(1, threads // 4)  # RepeatMasker -pa value (uses 4x this)
     shell:
         """
         mkdir -p {params.outdir}
         cd {params.outdir}
-        RepeatMasker -lib $(realpath {input.library}) -norna -no_is -lcambig -s -a -pa {params.threads} \
+        RepeatMasker -lib $(realpath {input.library}) -norna -no_is -lcambig -s -a -pa {params.rm_threads} \
                      -dir {params.outdir} $(realpath {input.genome})
         """
 
@@ -42,9 +35,11 @@ rule heliano_detection:
         genome="{outdir}/{species}_EarlGrey/{species}.prep"
     output:
         helitron_gff="{outdir}/{species}_EarlGrey/{species}_heliano/RC.representative.gff"
+    threads: workflow.cores  # HELIANO can use all available cores
+    resources:
+        mem_mb=lambda wildcards, attempt: 8000 * attempt  # 8GB, scales with retries
     params:
-        heliano_dir="{outdir}/{species}_EarlGrey/{species}_heliano",
-        threads=THREADS
+        heliano_dir="{outdir}/{species}_EarlGrey/{species}_heliano"
     shell:
         """
         if [ "{HELIANO}" == "yes" ]; then
@@ -52,7 +47,7 @@ rule heliano_detection:
             cd {params.heliano_dir}
             timestamp=$(date +"%Y%m%d_%H%M")
             heliano -g {input.genome} --nearest -dn 6000 -flank_sim 0.5 \
-                    -o {params.heliano_dir}/HEL_$timestamp -w 10000 -n {params.threads}
+                    -o {params.heliano_dir}/HEL_$timestamp -w 10000 -n {threads}
             awk '{{OFS="\t"}}{{print $1, "HELIANO", "RC/Helitron", $2+1, $3, $5, $6, ".", "ID="$9"_"$11";shortTE=F"}}' \
                 {params.heliano_dir}/HEL_$timestamp/RC.representative.bed > {output.helitron_gff}
         else
@@ -72,10 +67,12 @@ rule merge_repeats:
         bed="{outdir}/{species}_EarlGrey/{species}_mergedRepeats/looseMerge/{species}.filteredRepeats.bed",
         gff="{outdir}/{species}_EarlGrey/{species}_mergedRepeats/looseMerge/{species}.filteredRepeats.gff",
         summary="{outdir}/{species}_EarlGrey/{species}_mergedRepeats/looseMerge/{species}.filteredRepeats.summary"
+    threads: workflow.cores  # mergeRepeats can use all available cores
+    resources:
+        mem_mb=lambda wildcards, attempt: 8000 * attempt  # 8GB, scales with retries
     params:
         script_dir=SCRIPT_DIR,
         outdir="{outdir}/{species}_EarlGrey/{species}_mergedRepeats/looseMerge",
-        threads=THREADS,
         margin=MARGIN,
         helitron_param=lambda wildcards, input: f"-e {input.helitron_gff}" if HELIANO == "yes" and os.path.getsize(input.helitron_gff if HELIANO == "yes" else "/dev/null") > 0 else ""
     shell:
@@ -84,7 +81,7 @@ rule merge_repeats:
         
         # Try loose merge first
         {params.script_dir}/rcMergeRepeatsLoose -f {input.genome} -s {wildcards.species} \
-            -d {params.outdir} -u {input.out} -q {input.tbl} -t {params.threads} \
+            -d {params.outdir} -u {input.out} -q {input.tbl} -t {threads} \
             -b {input.dict} -m {params.margin} {params.helitron_param}
         
         # Fix GFF formatting
@@ -98,7 +95,7 @@ rule merge_repeats:
             echo "Loose merge failed, trying strict merge..."
             {params.script_dir}/rcMergeRepeats -f {input.genome} -s {wildcards.species} \
                 -d {wildcards.outdir}/{wildcards.species}_EarlGrey/{wildcards.species}_mergedRepeats \
-                -u {input.out} -q {input.tbl} -t {params.threads} \
+                -u {input.out} -q {input.tbl} -t {threads} \
                 -b {input.dict} -m {params.margin} {params.helitron_param}
             
             # Move strict merge results to expected location if loose merge failed
@@ -135,11 +132,11 @@ rule calculate_divergence:
     output:
         div_gff="{outdir}/{species}_EarlGrey/{species}_RepeatLandscape/{species}.filteredRepeats.withDivergence.gff",
         div_summary="{outdir}/{species}_EarlGrey/{species}_summaryFiles/{species}_divergence_summary_table.tsv"
+    threads: workflow.cores  # Divergence calculation can use all available cores
     params:
         script_dir=SCRIPT_DIR,
         landscape_dir="{outdir}/{species}_EarlGrey/{species}_RepeatLandscape",
-        summary_dir="{outdir}/{species}_EarlGrey/{species}_summaryFiles",
-        threads=THREADS
+        summary_dir="{outdir}/{species}_EarlGrey/{species}_summaryFiles"
     shell:
         """
         mkdir -p {params.landscape_dir}
@@ -148,7 +145,7 @@ rule calculate_divergence:
         # Calculate divergence
         python {params.script_dir}/divergenceCalc/divergence_calc.py \
             -l {input.library} -g {input.genome_orig} -i {input.gff} \
-            -o {output.div_gff} -t {params.threads}
+            -o {output.div_gff} -t {threads}
         
         # Generate divergence plots
         Rscript {params.script_dir}/divergenceCalc/divergence_plot.R \
@@ -197,8 +194,6 @@ rule generate_softmasked_genome:
             gunzip -c {input.backup} > {input.backup}.tmp
             bedtools maskfasta -fi {input.backup}.tmp -bed {input.bed} \
                               -fo {output.softmasked} -soft
-            rm {input.backup}.tmp
-        else
-            touch {output.softmasked}
+            rm -f {input.backup}.tmp
         fi
         """
