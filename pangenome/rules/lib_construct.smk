@@ -71,7 +71,7 @@ rule repeatmasker:
         genome="{outdir}/{species}_EarlGrey/{species}.prep"
     output:
         masked="{outdir}/{species}_EarlGrey/{species}_RepeatMasker/{species}.prep.masked"
-    threads: lambda wildcards: max(4, workflow.cores // 4)  # Reserve actual threads (min 4 since -pa 1 uses 4)
+    threads: workflow.cores  # Claim all cores so only one RM job runs at a time
     params:
         outdir="{outdir}/{species}_EarlGrey/{species}_RepeatMasker",
         rep_spec=REPSPEC,
@@ -93,7 +93,7 @@ rule repeatmasker_custom:
         lib=CUSTOM_LIB
     output:
         masked="{outdir}/{species}_EarlGrey/{species}_RepeatMasker/{species}.prep.masked"
-    threads: lambda wildcards: max(4, workflow.cores // 4)  # Reserve actual threads (min 4 since -pa 1 uses 4)
+    threads: workflow.cores  # Claim all cores so only one RM job runs at a time
     params:
         outdir="{outdir}/{species}_EarlGrey/{species}_RepeatMasker",
         rm_threads=lambda wildcards, threads: max(1, threads // 4)  # RepeatMasker -pa value (uses 4x this)

@@ -1289,3 +1289,4 @@ These all passed successfully, confirming that resource management is working as
 
 ### Pipeline subsets consistent with initial implementation
 In original Earl Grey, there are three commands: full pipeline with `earlGrey`, library construction with `earlGreyLibConstruct`, and annotation with an already-curated library with `earlGreyAnnotationOnly`. I would like to add these as options at the pangenome level so that users can run just the library construction or annotation steps if they wish, without needing to run the full pipeline. 
+

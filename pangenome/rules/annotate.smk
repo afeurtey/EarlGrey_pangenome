@@ -18,7 +18,7 @@ rule repeatmasker_annotation:
         masked="{outdir}/{species}_EarlGrey/{species}_RepeatMasker_Against_Custom_Library/{species}.prep.masked",
         out="{outdir}/{species}_EarlGrey/{species}_RepeatMasker_Against_Custom_Library/{species}.prep.out",
         tbl="{outdir}/{species}_EarlGrey/{species}_RepeatMasker_Against_Custom_Library/{species}.prep.tbl"
-    threads: lambda wildcards: max(4, workflow.cores // 4)  # Reserve actual threads (min 4 since -pa 1 uses 4)
+    threads: workflow.cores  # Claim all cores so only one RM job runs at a time
     params:
         outdir="{outdir}/{species}_EarlGrey/{species}_RepeatMasker_Against_Custom_Library",
         rm_threads=lambda wildcards, threads: max(1, threads // 4)  # RepeatMasker -pa value (uses 4x this)
