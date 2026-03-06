@@ -1260,3 +1260,32 @@ snakemake --configfile ../test/unit_test_10_CPU_MEMORY/config.yaml \
 
 This prevents interactive prompts when removing files with any permission settings.
 
+## March 6, 2026 - Final Validation and Documentation Updates
+
+I have completed half of unit test 10, I will now run the full test and verify all outputs and resource management features work as expected. After that, I will update the documentation to reflect the new resource management features and provide guidance on how to use them effectively.
+
+Run the full test directing the output to a log file for detailed analysis:
+
+```bash
+cd /data/toby/EarlGrey_pangenome/pangenome/
+
+snakemake --configfile ../test/unit_test_10_CPU_MEMORY/config.yaml \
+  --cores 16 --resources mem_mb=64000 \
+  --printshellcmds \
+  --reason \
+  2>&1 | tee ../test/unit_test_10_CPU_MEMORY/resource_test.log
+```
+
+Now verify the results:
+
+```bash
+cd /data/toby/EarlGrey_pangenome/test/unit_test_10_CPU_MEMORY
+# Check RepeatMasker thread allocation
+bash ./validation_checklist.sh
+python3 analyze_parallelization.py
+```
+
+These all passed successfully, confirming that resource management is working as intended.
+
+### Pipeline subsets consistent with initial implementation
+In original Earl Grey, there are three commands: full pipeline with `earlGrey`, library construction with `earlGreyLibConstruct`, and annotation with an already-curated library with `earlGreyAnnotationOnly`. I would like to add these as options at the pangenome level so that users can run just the library construction or annotation steps if they wish, without needing to run the full pipeline. 
